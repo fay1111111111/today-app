@@ -72,12 +72,20 @@
         <svg id="treeSvg" viewBox="0 0 360 540" xmlns="http://www.w3.org/2000/svg"></svg>
         <div class="tree-replay-label" id="treeReplayLabel" hidden></div>
       </div>
+      <div class="tree-axis" id="treeAxis" hidden>
+        <div class="tree-axis-date" id="treeAxisDate">2026年1月1日</div>
+        <div class="tree-axis-track">
+          <div class="tree-axis-months" id="treeAxisMonths"></div>
+          <div class="tree-axis-needle" id="treeAxisNeedle"></div>
+        </div>
+      </div>
       <footer class="tree-foot">
         <div class="tree-years" id="treeYears"></div>
         <p class="tree-days" id="treeDays"></p>
         <div class="tree-foot-actions">
           <button type="button" class="tree-primary" id="treeCapture">记下今天</button>
           <button type="button" class="tree-text-btn" id="treeReplay">看它怎么长出来</button>
+          <button type="button" class="tree-text-btn" id="treeDemo">填入一年的演示</button>
           <button type="button" class="tree-text-btn" id="treeRecords">查看这一年的记录</button>
         </div>
       </footer>

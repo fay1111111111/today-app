@@ -1083,8 +1083,10 @@
   let treeNodes = [];
   let treeGrown = false;
   let treeReplayTimer = null;
+  let treeReplayRaf = 0;
   let treeReplaying = false;
   let lastTreeStage = '';
+  let liveTree = null;
 
   function yearRecords(y, until) {
     const end = until == null ? Date.now() : until;
@@ -1535,18 +1537,242 @@
     openSheet('memSheet');
   }
 
+  const DAY = 86400000;
+  function easeOut(t) {
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    return 1 - Math.pow(1 - t, 2.15);
+  }
+  function progressAt(now, start, end) {
+    if (now <= start) return 0;
+    if (now >= end) return 1;
+    return easeOut((now - start) / Math.max(1, end - start));
+  }
+  function mixHex(a, b, u) {
+    const p = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+    const A = p(a), B = p(b);
+    const h = (n) => Math.round(n).toString(16).padStart(2, '0');
+    return '#' + h(A[0] + (B[0] - A[0]) * u) + h(A[1] + (B[1] - A[1]) * u) + h(A[2] + (B[2] - A[2]) * u);
+  }
+  function seasonAt(ts) {
+    const doy = dayOfYear(new Date(ts));
+    const keys = [
+      { d: 0, pal: ['#8a9a78', '#9aaa86', '#7a8a6c'], bg: '#efeae4' },
+      { d: 50, pal: ['#b7d492', '#c5dea8', '#a8c984'], bg: '#f6f1e6' },
+      { d: 130, pal: ['#6a8a5c', '#7e9d6c', '#587850'], bg: '#f3efe3' },
+      { d: 230, pal: ['#c5b36a', '#d8c888', '#9aaa62'], bg: '#f3ebe0' },
+      { d: 310, pal: ['#8a9a78', '#9aaa86', '#7a8a6c'], bg: '#efeae4' },
+      { d: 366, pal: ['#8a9a78', '#9aaa86', '#7a8a6c'], bg: '#efeae4' },
+    ];
+    let i = 0;
+    while (i < keys.length - 1 && doy > keys[i + 1].d) i++;
+    const a = keys[i], b = keys[i + 1];
+    const u = (doy - a.d) / Math.max(1, b.d - a.d);
+    return {
+      pal: a.pal.map((c, k) => mixHex(c, b.pal[k % b.pal.length], u)),
+      bg: mixHex(a.bg, b.bg, u),
+    };
+  }
+  function heightForCount(n) {
+    const pts = [[0, 0], [1, 48], [2, 72], [3, 100], [9, 118], [10, 150], [29, 176], [30, 210], [59, 240], [60, 264], [99, 288], [140, 300], [220, 310]];
+    if (n <= 0) return 0;
+    for (let i = 1; i < pts.length; i++) {
+      if (n <= pts[i][0]) {
+        const a = pts[i - 1], b = pts[i];
+        return a[1] + (b[1] - a[1]) * ((n - a[0]) / (b[0] - a[0]));
+      }
+    }
+    return pts[pts.length - 1][1];
+  }
+  function trunkHAt(t, list) {
+    let h = 0;
+    for (let i = 0; i < list.length; i++) {
+      const v = heightForCount(i) + (heightForCount(i + 1) - heightForCount(i)) * progressAt(t, list[i].createdAt, list[i].createdAt + 22 * DAY);
+      if (v > h) h = v;
+    }
+    return h;
+  }
+  function branchUnlockN(i) {
+    if (i < 2) return 3;
+    if (i < 5) return 10;
+    if (i < 8) return 30;
+    if (i < 10) return 60;
+    return 100;
+  }
+
+  function buildTimeMap(y, list) {
+    const start = new Date(y, 0, 1).getTime();
+    const end = new Date(y, 11, 31, 12, 0, 0).getTime();
+    const nDays = Math.round((end - start) / DAY) + 1;
+    const hits = new Uint8Array(nDays);
+    list.forEach((r) => {
+      const i = Math.max(0, Math.min(nDays - 1, Math.floor((new Date(r.createdAt).setHours(0, 0, 0, 0) - start) / DAY)));
+      hits[i] = Math.min(3, hits[i] + 1);
+    });
+    const grow = new Uint8Array(nDays);
+    for (let i = 0; i < nDays; i++) {
+      if (!hits[i]) continue;
+      for (let k = 0; k <= 18 && i + k < nDays; k++) grow[i + k] = 1;
+    }
+    const w = new Float64Array(nDays);
+    let total = 0;
+    for (let i = 0; i < nDays; i++) {
+      let x = hits[i] >= 2 ? 0.92 : hits[i] ? 0.64 : grow[i] ? 0.17 : 0.03;
+      w[i] = x;
+      total += x;
+    }
+    const prefix = new Float64Array(nDays + 1);
+    for (let i = 0; i < nDays; i++) prefix[i + 1] = prefix[i] + w[i];
+    const duration = Math.min(72, Math.max(42, total * 0.72));
+    return { start, end, nDays, w, prefix, total, duration };
+  }
+  function dateFromElapsed(map, sec) {
+    const u = Math.min(map.total, (sec / map.duration) * map.total);
+    let lo = 0, hi = map.nDays;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (map.prefix[mid] < u) lo = mid + 1;
+      else hi = mid;
+    }
+    const i = Math.max(1, lo) - 1;
+    const span = map.w[i] || 0.03;
+    const frac = span ? (u - map.prefix[i]) / span : 0;
+    return map.start + (i + frac) * DAY;
+  }
+
+  function mountLiveTree(y) {
+    const svg = $('treeSvg');
+    const list = yearRecords(y);
+    const n = list.length;
+    const stage = growthStage(n);
+    const spec = stageSpec(stage, '夏');
+    const gy = 500;
+    const extra = Math.min(2, themeCount(list).length);
+    let branchN = spec.branches + extra;
+    if (stage === 'seedling') branchN = Math.min(3, (n >= 5 ? 3 : 2) + extra);
+    if (stage === 'young') branchN = 5;
+    branchN = Math.min(BRANCH_RECIPES.length, branchN);
+    const recipes = stage === 'seedling' ? SAPLING_RECIPES.slice(0, branchN) : BRANCH_RECIPES.slice(0, branchN);
+    const branches = recipes.map((rp, i) => {
+      const geo = makeBranch(rp, gy, spec.trunkH, 1);
+      const need = branchUnlockN(i);
+      const rec = list[need - 1];
+      const birth = rec ? rec.createdAt : list[list.length - 1].createdAt;
+      return { geo, birth, grow: 24 * DAY, i };
+    });
+    const nodes = [];
+    list.forEach((r, i) => {
+      const node = placeNode(r, i, branches.map((b) => b.geo), 1, spec.trunkH, gy);
+      const br = branches[Math.min(branches.length - 1, Math.floor(i / Math.max(1, n / Math.max(1, branches.length))))] || branches[0];
+      const start = Math.max(r.createdAt, (br ? br.birth : r.createdAt) + 6 * DAY);
+      nodes.push({
+        node, r, kind: nodeKind(r),
+        birth: r.createdAt,
+        start,
+        grow: (nodeKind(r) === 'photo' ? 16 : 13) * DAY,
+        colorI: i,
+      });
+    });
+    treeNodes = nodes.map((x) => x.node);
+
+    const spine = `M ${CX} ${gy} C ${CX - 8} ${gy - spec.trunkH * 0.36} ${CX + 9} ${gy - spec.trunkH * 0.68} ${CX + 1} ${gy - spec.trunkH}`;
+    let brHtml = '';
+    branches.forEach((br, i) => {
+      brHtml += `<path id="lv-br-${i}" class="lv-br" pathLength="1" d="${cubicPath(br.geo.a, br.geo.b, br.geo.c, br.geo.d)}" fill="none" stroke="#5a5146" stroke-width="${br.geo.w}" stroke-linecap="round" stroke-dasharray="1" stroke-dashoffset="1"/>`;
+    });
+    let ndHtml = '';
+    nodes.forEach((it, i) => {
+      const nd = it.node;
+      if (it.kind === 'photo') ndHtml += `<g id="lv-nd-${i}" class="node lv-nd" data-nid="${nd.id}" transform="translate(${nd.x.toFixed(1)} ${nd.y.toFixed(1)}) scale(0)">${flowerMark(nd, false, false).replace(/<g[^>]*>/, '').replace(/<\/g>$/, '')}</g>`;
+      else if (it.kind === 'dream') ndHtml += `<g id="lv-nd-${i}" class="node lv-nd" data-nid="${nd.id}" transform="translate(${nd.x.toFixed(1)} ${nd.y.toFixed(1)}) scale(0)">${flowerMark(nd, true, false).replace(/<g[^>]*>/, '').replace(/<\/g>$/, '')}</g>`;
+      else if (it.kind === 'event') ndHtml += `<g id="lv-nd-${i}" class="node lv-nd" data-nid="${nd.id}" transform="translate(${nd.x.toFixed(1)} ${nd.y.toFixed(1)}) scale(0)">${fruitMark(nd, true).replace(/<g[^>]*>/, '').replace(/<\/g>$/, '')}</g>`;
+      else ndHtml += `<g id="lv-nd-${i}" class="node lv-nd" data-nid="${nd.id}" transform="translate(${nd.x.toFixed(1)} ${nd.y.toFixed(1)}) rotate(${nd.rot.toFixed(0)}) scale(0)"><path class="lv-leaf" d="M0 ${(-nd.size).toFixed(1)} C ${(nd.size * .74).toFixed(1)} ${(-nd.size * .18).toFixed(1)} ${(nd.size * .5).toFixed(1)} ${(nd.size * .4).toFixed(1)} 0 ${nd.size.toFixed(1)} C ${(-nd.size * .5).toFixed(1)} ${(nd.size * .4).toFixed(1)} ${(-nd.size * .74).toFixed(1)} ${(-nd.size * .18).toFixed(1)} 0 ${(-nd.size).toFixed(1)}Z" fill="#b7d492"/></g>`;
+    });
+
+    svg.innerHTML = `<defs>
+        <linearGradient id="treeInk" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#3d3830"/><stop offset=".55" stop-color="#5a5146"/><stop offset="1" stop-color="#3a352e"/>
+        </linearGradient>
+      </defs>
+      <g id="g-soil" pointer-events="none">
+        <ellipse cx="${CX}" cy="${gy + 6}" rx="88" ry="13" fill="#e6dcc8"/>
+        <ellipse cx="${CX - 4}" cy="${gy + 2}" rx="48" ry="6" fill="#d8ccb6" opacity=".7"/>
+      </g>
+      <g id="g-seed" opacity="1">
+        <ellipse cx="${CX}" cy="${gy - 11}" rx="7.8" ry="10.4" fill="#6b5340"/>
+        <ellipse cx="${CX - 2.4}" cy="${gy - 14}" rx="2.4" ry="3.2" fill="#cbb89a" opacity=".38"/>
+      </g>
+      <g id="g-trunk">
+        <path id="lv-spine" pathLength="1" d="${spine}" fill="none" stroke="#8a7358" stroke-width="${Math.max(2.4, spec.baseW)}" stroke-linecap="round" stroke-dasharray="1" stroke-dashoffset="1"/>
+        <g id="lv-fillg">
+          <path id="lv-trunkfill" d="${trunkPath(gy, spec.trunkH, spec.baseW, spec.topW)}" fill="url(#treeInk)" opacity="0"/>
+        </g>
+      </g>
+      <g id="g-branches">${brHtml}</g>
+      <g id="g-leaves">${ndHtml}</g>`;
+
+    liveTree = {
+      list, spec, gy, finalH: spec.trunkH,
+      spine: $('lv-spine'),
+      fill: $('lv-trunkfill'),
+      fillg: $('lv-fillg'),
+      seed: $('g-seed'),
+      branches: branches.map((br, i) => Object.assign(br, { el: $('lv-br-' + i) })),
+      nodes: nodes.map((it, i) => Object.assign(it, { el: $('lv-nd-' + i), leaf: document.querySelector('#lv-nd-' + i + ' .lv-leaf') })),
+    };
+    applyLiveTree(new Date(y, 0, 1).getTime());
+  }
+
+  function applyLiveTree(t) {
+    const L = liveTree;
+    if (!L) return;
+    const h = trunkHAt(t, L.list);
+    const tp = L.finalH ? Math.min(1, h / L.finalH) : 0;
+    if (L.spine) L.spine.setAttribute('stroke-dashoffset', (1 - tp).toFixed(4));
+    if (L.fill) L.fill.style.opacity = tp > 0.22 ? String(Math.min(1, (tp - 0.22) / 0.35)) : '0';
+    if (L.fillg) L.fillg.style.transform = `scaleY(${Math.max(0.0001, tp)})`;
+    if (L.seed) L.seed.style.opacity = String(tp < 0.12 ? 1 : Math.max(0, 1 - (tp - 0.12) / 0.18));
+    L.branches.forEach((br) => {
+      if (!br.el) return;
+      const p = progressAt(t, br.birth, br.birth + br.grow);
+      br.el.setAttribute('stroke-dashoffset', (1 - p).toFixed(4));
+    });
+    const pal = seasonAt(t).pal;
+    L.nodes.forEach((it) => {
+      if (!it.el) return;
+      let p = progressAt(t, it.start, it.start + it.grow);
+      if (t < it.birth) p = 0;
+      let sc, op;
+      if (p <= 0) { sc = 0; op = 0; }
+      else if (p < 0.28) { sc = 0.18 + p * 0.9; op = 0.45 + p; }
+      else if (p < 0.7) { sc = 0.43 + (p - 0.28) * 0.9; op = 0.75; }
+      else { sc = 0.81 + (p - 0.7) * 0.63; op = 0.75 + (p - 0.7) * 0.25; }
+      const rot = it.node.rot || 0;
+      it.el.setAttribute('transform', `translate(${it.node.x.toFixed(1)} ${it.node.y.toFixed(1)}) rotate(${rot.toFixed(0)}) scale(${sc.toFixed(3)})`);
+      it.el.style.opacity = String(Math.max(0, Math.min(1, op)));
+      if (it.leaf) it.leaf.setAttribute('fill', pal[it.colorI % pal.length]);
+    });
+    $('view-tree').style.background = seasonAt(t).bg;
+  }
+
   function stopReplay() {
     if (treeReplayTimer) { clearTimeout(treeReplayTimer); treeReplayTimer = null; }
+    if (treeReplayRaf) { cancelAnimationFrame(treeReplayRaf); treeReplayRaf = 0; }
     treeReplaying = false;
+    liveTree = null;
     const label = $('treeReplayLabel');
     if (label) { label.hidden = true; label.innerHTML = ''; }
+    const axis = $('treeAxis');
+    if (axis) axis.hidden = true;
     const view = $('view-tree');
-    if (view) view.classList.remove('is-replaying');
+    if (view) {
+      view.classList.remove('is-replaying');
+      view.style.background = '';
+    }
   }
 
   function replayDate(ts) {
     const d = new Date(ts);
-    return `${d.getMonth() + 1}月${d.getDate()}日`;
+    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
   }
 
   function setReplayLabel(date, note) {
@@ -1555,147 +1781,170 @@
     el.innerHTML = (date ? `<span class="rl-date">${date}</span>` : '') + (note ? `<span class="rl-note">${note}</span>` : '');
   }
 
-  const STAGE_NOTE = {
-    sprout: '它发芽了',
-    seedling: '长成小树苗',
-    young: '开始长成树',
-    growing: '枝叶变密了',
-    canopy: '树冠开了',
-    full: '长成了这一年的树',
-  };
-
-  function collectGrowthEvents(list) {
-    const raw = [];
-    let n = 0;
-    let stage = 'seed';
-    let hadPhoto = false, hadFruit = false, hadDream = false;
-    const themes = {};
-    list.forEach((r) => {
-      n += 1;
-      const next = growthStage(n);
-      const kind = nodeKind(r);
-      const morph = [];
-      if (next !== stage) {
-        morph.push({ type: 'stage', from: stage, to: next });
-        stage = next;
-      }
-      if (kind === 'photo' && !hadPhoto) {
-        hadPhoto = true;
-        if (next !== 'sprout') morph.push({ type: 'flower' });
-      }
-      if (kind === 'event' && !hadFruit) {
-        hadFruit = true;
-        if (next !== 'sprout') morph.push({ type: 'fruit' });
-      }
-      if (kind === 'dream' && !hadDream) {
-        hadDream = true;
-        if (next !== 'sprout') morph.push({ type: 'dream' });
-      }
-      ((r.tidy && r.tidy.themes) || []).forEach((t) => {
-        if (t === '情绪' || t === '梦') return;
-        themes[t] = (themes[t] || 0) + 1;
-        if (themes[t] === 3) morph.push({ type: 'branch', theme: t });
-      });
-      if (morph.length) raw.push({ at: r.createdAt, count: n, stage: next, morph });
-    });
-    if (!raw.length) return raw;
-    const CLUSTER = 5 * 86400000;
-    const out = [];
-    raw.forEach((ev) => {
-      if (!out.length) {
-        out.push({ at: ev.at, count: ev.count, stage: ev.stage, morph: ev.morph.slice() });
-        return;
-      }
-      const last = out[out.length - 1];
-      const keepSproutAlone = out.length === 1 && last.stage === 'sprout';
-      if (!keepSproutAlone && ev.at - last.at < CLUSTER) {
-        last.at = ev.at;
-        last.count = ev.count;
-        last.stage = ev.stage;
-        last.morph = last.morph.concat(ev.morph);
-      } else {
-        out.push({ at: ev.at, count: ev.count, stage: ev.stage, morph: ev.morph.slice() });
-      }
-    });
-    return out;
-  }
-
-  function buildReplayBeats(y, list) {
-    const events = collectGrowthEvents(list);
-    const jan1 = new Date(y, 0, 1).getTime();
-    const GAP = 30 * 86400000;
-    const beats = [];
-    const firstAt = events[0].at;
-    beats.push({ kind: 'seed', until: firstAt - 1, hold: 1100 });
-    if (firstAt - jan1 > GAP) beats.push({ kind: 'compress', hold: 500 });
-    events.forEach((ev, i) => {
-      if (i > 0) {
-        const gap = ev.at - events[i - 1].at;
-        if (gap > GAP) beats.push({ kind: 'compress', hold: 500 });
-        else beats.push({ kind: 'hold', hold: Math.min(1200, 400 + (gap / 86400000) * 55) });
-      }
-      beats.push({ kind: 'grow', until: ev.at, count: ev.count, stage: ev.stage, morph: ev.morph });
-    });
-    beats.push({ kind: 'end' });
-    return beats;
+  function openReplayEnd() {
+    const y = treeYear;
+    const list = yearRecords(y);
+    const photos = list.filter((r) => r.image).length;
+    const dreams = list.filter((r) => r.type === 'dream').length;
+    const events = list.filter((r) => nodeKind(r) === 'event').length;
+    $('memBody').innerHTML = `
+      <p class="mem-quote">这一年，你留下了很多东西。</p>
+      <p class="mem-kind">它们最后，长成了今天的你。</p>
+      <div class="mem-stats">
+        记录 ${list.length}<br/>
+        照片 ${photos}<br/>
+        梦境 ${dreams}<br/>
+        重要时刻 ${events}
+      </div>
+      <button type="button" class="mem-go" id="memToYear">看看这一年</button>`;
+    openSheet('memSheet');
   }
 
   function replayYear() {
     if (treeReplayTimer) { clearTimeout(treeReplayTimer); treeReplayTimer = null; }
+    if (treeReplayRaf) { cancelAnimationFrame(treeReplayRaf); treeReplayRaf = 0; }
     const y = treeYear;
     const list = yearRecords(y);
     if (!list.length) { toast('先留下今天，它才会开始长。'); return; }
     treeReplaying = true;
     $('view-tree').classList.add('is-replaying');
-    const beats = buildReplayBeats(y, list);
-    let i = 0;
-    const play = () => {
+    const axis = $('treeAxis');
+    axis.hidden = false;
+    $('treeAxisMonths').innerHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => `<span>${m}月</span>`).join('');
+    const map = buildTimeMap(y, list);
+    const jan1 = map.start;
+    const span = map.end - jan1;
+    mountLiveTree(y);
+    const t0 = performance.now();
+    let lastDay = -1;
+    const tick = (now) => {
       if (!treeReplaying) return;
-      if (i >= beats.length) { treeReplaying = false; return; }
-      const beat = beats[i];
-      i += 1;
-      if (beat.kind === 'seed') {
-        setReplayLabel('', '一颗种子');
-        lastTreeStage = '';
-        treeGrown = false;
-        renderTree({ until: beat.until, replay: true });
-        treeReplayTimer = setTimeout(play, beat.hold);
-        return;
-      }
-      if (beat.kind === 'compress') {
-        setReplayLabel('', '后来');
-        treeReplayTimer = setTimeout(play, beat.hold);
-        return;
-      }
-      if (beat.kind === 'hold') {
-        treeReplayTimer = setTimeout(play, beat.hold);
-        return;
-      }
-      if (beat.kind === 'grow') {
-        const stageChange = (beat.morph || []).filter((m) => m.type === 'stage').pop();
-        const note = stageChange ? (STAGE_NOTE[stageChange.to] || '') : '';
-        setReplayLabel(replayDate(beat.until), note);
-        renderTree({ until: beat.until, replay: true, grow: true });
-        const dur = beat.stage === 'sprout' ? 2500 : 2100;
-        treeReplayTimer = setTimeout(play, dur);
-        return;
-      }
-      if (beat.kind === 'end') {
-        const label = $('treeReplayLabel');
-        label.hidden = true;
-        label.innerHTML = '';
-        $('view-tree').classList.remove('is-replaying');
-        treeReplaying = false;
-        treeReplayTimer = null;
-        lastTreeStage = growthStage(list.length);
-        treeGrown = true;
-        renderTree({ skipGrow: true });
+      const sec = (now - t0) / 1000;
+      if (sec >= map.duration) {
+        applyLiveTree(map.end);
+        $('treeAxisNeedle').style.left = '100%';
+        $('treeAxisDate').textContent = replayDate(map.end);
+        setReplayLabel(replayDate(map.end), '');
+        treeReplayRaf = 0;
         treeReplayTimer = setTimeout(() => {
-          if ($('view-tree').classList.contains('active')) openYearMe();
-        }, 600);
+          treeReplaying = false;
+          $('view-tree').classList.remove('is-replaying');
+          const axis = $('treeAxis');
+          if (axis) axis.hidden = true;
+          const label = $('treeReplayLabel');
+          if (label) label.hidden = true;
+          if ($('view-tree').classList.contains('active')) openReplayEnd();
+        }, 2000);
+        return;
       }
+      const t = dateFromElapsed(map, sec);
+      applyLiveTree(t);
+      const pct = Math.max(0, Math.min(1, (t - jan1) / span));
+      $('treeAxisNeedle').style.left = (pct * 100).toFixed(2) + '%';
+      const d = new Date(t);
+      const day = d.getDate() + d.getMonth() * 32;
+      if (day !== lastDay) {
+        lastDay = day;
+        const text = replayDate(t);
+        $('treeAxisDate').textContent = text;
+        setReplayLabel(text, '');
+      }
+      treeReplayRaf = requestAnimationFrame(tick);
     };
-    play();
+    treeReplayRaf = requestAnimationFrame(tick);
+  }
+
+  const DEMO_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIABAPXq3AAAACH5BAEKAAEALAAAAAABAAEAAAICRAEAOw==';
+  const DEMO_YEAR = [
+    [1, 8, 'text', '新的一年，先把这句话留下来。'],
+    [1, 22, 'mood', '还是有一点紧。', { mood: '紧绷' }],
+    [2, 4, 'text', '立春了，风开始变软。'],
+    [2, 14, 'text', '一个人吃饭，其实也没有那么糟。'],
+    [2, 27, 'dream', '梦见自己一直在找一个车站。'],
+    [3, 3, 'text', '下班路上忽然觉得，其实也没那么糟。'],
+    [3, 8, 'photo', '那天去了海边。', { photo: true }],
+    [3, 10, 'text', '把这句话留给明年的自己。'],
+    [3, 17, 'idea', '也许我真正想做的事情，和现在的工作没有关系。'],
+    [3, 21, 'text', '朋友来了，坐到很晚。'],
+    [3, 28, 'mood', '松下来一点。', { mood: '放松' }],
+    [4, 2, 'text', '开始认真想搬家的事。'],
+    [4, 6, 'photo', '窗台上的第一片新叶。', { photo: true }],
+    [4, 11, 'text', '加班到很晚，走在路上听到蝉。'],
+    [4, 15, 'idea', '如果不用考虑钱，我可能想做点自己的东西。'],
+    [4, 20, 'text', '给妈妈打了电话。'],
+    [4, 27, 'dream', '又梦到很大的房子，灯一盏盏灭掉。'],
+    [5, 4, 'text', '跑了三公里，身体先回来了。'],
+    [5, 9, 'photo', '傍晚的河堤。', { photo: true }],
+    [5, 13, 'text', '工作还是那些工作，人好像变了一点。'],
+    [5, 18, 'dream', '梦见自己在水下说话。'],
+    [5, 24, 'text', '突然不想解释了。'],
+    [5, 30, 'mood', '平静。', { mood: '平静' }],
+    [6, 3, 'text', '连续开会，脑子里只剩下嗡嗡声。'],
+    [6, 5, 'text', '中午一个人坐在楼梯间。'],
+    [6, 6, 'text', '把要说的话写在备忘录里，又删掉。'],
+    [6, 7, 'idea', '要不要离开，这个问题又来了。'],
+    [6, 8, 'text', '晚上走路回家，风是热的。'],
+    [6, 9, 'photo', '便利店灯光。', { photo: true }],
+    [6, 14, 'text', '朋友说：你看起来没以前那么急。'],
+    [6, 21, 'text', '夏至。白昼长得用不完。'],
+    [6, 28, 'dream', '梦见列车开过旧房子。'],
+    [7, 4, 'photo', '第一次去了这里。', { photo: true }],
+    [7, 8, 'text', '把手机放下，坐了很久。'],
+    [7, 15, 'text', '旅行里最安静的一个下午。'],
+    [7, 19, 'photo', '晚上的山。', { photo: true }],
+    [7, 26, 'text', '回来以后，房间小了一点。'],
+    [8, 2, 'idea', '也许方向比速度重要。'],
+    [8, 9, 'text', '立秋了，风里有别的东西。'],
+    [8, 14, 'text', '和爸爸聊了很短的一句话。'],
+    [8, 20, 'mood', '说不清。', { mood: '说不清' }],
+    [8, 25, 'text', '重新开始这件事，其实没有那么可怕。'],
+    [8, 31, 'dream', '梦见自己把一封信放进河里。'],
+    [9, 4, 'text', '白露。草木渐收。'],
+    [9, 7, 'text', '把桌上的东西收了一半。'],
+    [9, 12, 'photo', '旧相机里翻出一张照片。', { photo: true }],
+    [9, 16, 'idea', '我想要的自由，也许只是自己的节奏。'],
+    [9, 21, 'text', '秋分前后，睡得更好一点。'],
+    [9, 27, 'text', '工作告一段落，没有想象中轻松。'],
+    [10, 3, 'text', '叶子开始换颜色。'],
+    [10, 9, 'photo', '窗边的光。', { photo: true }],
+    [10, 14, 'text', '有些关系，就停在这里也好。'],
+    [10, 18, 'dream', '梦见车站终于出现了，却没有上车。'],
+    [10, 24, 'text', '第一次把“明年”说出口。'],
+    [10, 30, 'mood', '释然。', { mood: '释然' }],
+    [11, 5, 'text', '天黑得更早，人慢下来。'],
+    [11, 12, 'text', '把这一年写过的话又看了一遍。'],
+    [11, 19, 'idea', '原来我已经走了这么远。'],
+    [11, 27, 'text', '小雪。还没有下雪。'],
+    [12, 4, 'text', '把想做的事列在纸上，没有划掉。'],
+    [12, 11, 'photo', '今年最后一次出门很远。', { photo: true }],
+    [12, 16, 'dream', '梦见种子在抽屉里发芽。'],
+    [12, 21, 'text', '冬至。最长的一夜过去，光就会回来。'],
+    [12, 26, 'text', '把这句话留给明年的自己。'],
+    [12, 31, 'idea', '这一年结束了。我还在。'],
+  ];
+
+  function fillDemoYear() {
+    const y = 2026;
+    records = records.filter((r) => !r._demo);
+    DEMO_YEAR.forEach((row, i) => {
+      const m = row[0], d = row[1], type = row[2], text = row[3], extra = row[4] || {};
+      const at = new Date(y, m - 1, d, 8 + (i % 10), 10 + (i % 40)).getTime();
+      const t = tidy(text, type, { at, mood: extra.mood });
+      records.push({
+        id: 'demo_' + y + '_' + i,
+        type, text: t.text, image: extra.photo ? DEMO_PIXEL : null, mood: extra.mood || null,
+        tidy: packTidy(t),
+        followupQ: null, followup: null, noLink: false,
+        createdAt: at, _demo: true,
+      });
+    });
+    records.sort((a, b) => a.createdAt - b.createdAt);
+    persist();
+    treeYear = y;
+    lastTreeStage = '';
+    treeGrown = false;
+    renderToday(); renderDreams(); renderTree(); renderYear();
+    toast('这一年已经填好。可以看它怎么长出来。');
   }
 
   $('treeSvg').addEventListener('click', (e) => {
@@ -1708,6 +1957,7 @@
   $('treeToYear').addEventListener('click', () => showView('year'));
   $('treeRecords').addEventListener('click', () => showView('year'));
   $('treeReplay').addEventListener('click', replayYear);
+  $('treeDemo').addEventListener('click', fillDemoYear);
   $('treeCapture').addEventListener('click', () => openCapture('input'));
   $('treeYears').addEventListener('click', (e) => {
     const b = e.target.closest('[data-ty]');
