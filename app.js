@@ -304,10 +304,11 @@
   /* ---------------- 视图切换 ---------------- */
   const views = ['today', 'tree', 'dream', 'year'];
   function showView(name) {
+    if (name !== 'tree') stopReplay();
     views.forEach((v) => $('view-' + v).classList.toggle('active', v === name));
     document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
     if (name === 'today') renderToday();
-    if (name === 'tree') renderTree();
+    if (name === 'tree' && !treeReplaying) renderTree();
     if (name === 'dream') renderDreams();
     if (name === 'year') { calPage = new Date().getMonth(); renderYear(); }
     $('view-' + name).scrollTop = 0;
@@ -1082,6 +1083,7 @@
   let treeNodes = [];
   let treeGrown = false;
   let treeReplayTimer = null;
+  let treeReplaying = false;
   let lastTreeStage = '';
 
   function yearRecords(y, until) {
@@ -1456,14 +1458,20 @@
       ${plant}`;
 
     svg.classList.remove('tree-grow', 'tree-replaying', 'tree-month');
-    const shouldGrow = !opts.skipGrow && !opts.replay && (lastTreeStage !== stage || !treeGrown);
-    lastTreeStage = stage;
-    if (opts.replay) {
-      svg.classList.add('tree-month');
-    } else if (shouldGrow) {
-      svg.classList.add('tree-grow');
+    if (opts.grow) {
+      lastTreeStage = stage;
       treeGrown = true;
-      setTimeout(() => svg.classList.remove('tree-grow'), stage === 'sprout' ? 2500 : 2100);
+      svg.classList.add('tree-grow');
+    } else if (opts.replay) {
+      lastTreeStage = stage;
+    } else {
+      const shouldGrow = !opts.skipGrow && (lastTreeStage !== stage || !treeGrown);
+      lastTreeStage = stage;
+      if (shouldGrow) {
+        svg.classList.add('tree-grow');
+        treeGrown = true;
+        setTimeout(() => svg.classList.remove('tree-grow'), stage === 'sprout' ? 2500 : 2100);
+      }
     }
   }
 
@@ -1527,34 +1535,167 @@
     openSheet('memSheet');
   }
 
-  function replayYear() {
+  function stopReplay() {
+    if (treeReplayTimer) { clearTimeout(treeReplayTimer); treeReplayTimer = null; }
+    treeReplaying = false;
     const label = $('treeReplayLabel');
-    if (treeReplayTimer) { clearInterval(treeReplayTimer); treeReplayTimer = null; }
+    if (label) { label.hidden = true; label.innerHTML = ''; }
+    const view = $('view-tree');
+    if (view) view.classList.remove('is-replaying');
+  }
+
+  function replayDate(ts) {
+    const d = new Date(ts);
+    return `${d.getMonth() + 1}月${d.getDate()}日`;
+  }
+
+  function setReplayLabel(date, note) {
+    const el = $('treeReplayLabel');
+    el.hidden = false;
+    el.innerHTML = (date ? `<span class="rl-date">${date}</span>` : '') + (note ? `<span class="rl-note">${note}</span>` : '');
+  }
+
+  const STAGE_NOTE = {
+    sprout: '它发芽了',
+    seedling: '长成小树苗',
+    young: '开始长成树',
+    growing: '枝叶变密了',
+    canopy: '树冠开了',
+    full: '长成了这一年的树',
+  };
+
+  function collectGrowthEvents(list) {
+    const raw = [];
+    let n = 0;
+    let stage = 'seed';
+    let hadPhoto = false, hadFruit = false, hadDream = false;
+    const themes = {};
+    list.forEach((r) => {
+      n += 1;
+      const next = growthStage(n);
+      const kind = nodeKind(r);
+      const morph = [];
+      if (next !== stage) {
+        morph.push({ type: 'stage', from: stage, to: next });
+        stage = next;
+      }
+      if (kind === 'photo' && !hadPhoto) {
+        hadPhoto = true;
+        if (next !== 'sprout') morph.push({ type: 'flower' });
+      }
+      if (kind === 'event' && !hadFruit) {
+        hadFruit = true;
+        if (next !== 'sprout') morph.push({ type: 'fruit' });
+      }
+      if (kind === 'dream' && !hadDream) {
+        hadDream = true;
+        if (next !== 'sprout') morph.push({ type: 'dream' });
+      }
+      ((r.tidy && r.tidy.themes) || []).forEach((t) => {
+        if (t === '情绪' || t === '梦') return;
+        themes[t] = (themes[t] || 0) + 1;
+        if (themes[t] === 3) morph.push({ type: 'branch', theme: t });
+      });
+      if (morph.length) raw.push({ at: r.createdAt, count: n, stage: next, morph });
+    });
+    if (!raw.length) return raw;
+    const CLUSTER = 5 * 86400000;
+    const out = [];
+    raw.forEach((ev) => {
+      if (!out.length) {
+        out.push({ at: ev.at, count: ev.count, stage: ev.stage, morph: ev.morph.slice() });
+        return;
+      }
+      const last = out[out.length - 1];
+      const keepSproutAlone = out.length === 1 && last.stage === 'sprout';
+      if (!keepSproutAlone && ev.at - last.at < CLUSTER) {
+        last.at = ev.at;
+        last.count = ev.count;
+        last.stage = ev.stage;
+        last.morph = last.morph.concat(ev.morph);
+      } else {
+        out.push({ at: ev.at, count: ev.count, stage: ev.stage, morph: ev.morph.slice() });
+      }
+    });
+    return out;
+  }
+
+  function buildReplayBeats(y, list) {
+    const events = collectGrowthEvents(list);
+    const jan1 = new Date(y, 0, 1).getTime();
+    const GAP = 30 * 86400000;
+    const beats = [];
+    const firstAt = events[0].at;
+    beats.push({ kind: 'seed', until: firstAt - 1, hold: 1100 });
+    if (firstAt - jan1 > GAP) beats.push({ kind: 'compress', hold: 500 });
+    events.forEach((ev, i) => {
+      if (i > 0) {
+        const gap = ev.at - events[i - 1].at;
+        if (gap > GAP) beats.push({ kind: 'compress', hold: 500 });
+        else beats.push({ kind: 'hold', hold: Math.min(1200, 400 + (gap / 86400000) * 55) });
+      }
+      beats.push({ kind: 'grow', until: ev.at, count: ev.count, stage: ev.stage, morph: ev.morph });
+    });
+    beats.push({ kind: 'end' });
+    return beats;
+  }
+
+  function replayYear() {
+    if (treeReplayTimer) { clearTimeout(treeReplayTimer); treeReplayTimer = null; }
     const y = treeYear;
     const list = yearRecords(y);
     if (!list.length) { toast('先留下今天，它才会开始长。'); return; }
-    label.hidden = false;
-    let step = -1;
-    const tick = () => {
-      if (step < 0) {
-        label.textContent = `${y}年1月1日`;
-        renderTree({ until: new Date(y, 0, 1).getTime() - 1, replay: true });
-        step = 0;
+    treeReplaying = true;
+    $('view-tree').classList.add('is-replaying');
+    const beats = buildReplayBeats(y, list);
+    let i = 0;
+    const play = () => {
+      if (!treeReplaying) return;
+      if (i >= beats.length) { treeReplaying = false; return; }
+      const beat = beats[i];
+      i += 1;
+      if (beat.kind === 'seed') {
+        setReplayLabel('', '一颗种子');
+        lastTreeStage = '';
+        treeGrown = false;
+        renderTree({ until: beat.until, replay: true });
+        treeReplayTimer = setTimeout(play, beat.hold);
         return;
       }
-      const until = new Date(y, step + 1, 0, 23, 59, 59).getTime();
-      label.textContent = `${y}年${step + 1}月`;
-      renderTree({ until, replay: true });
-      step++;
-      if (step > 11) {
-        clearInterval(treeReplayTimer);
+      if (beat.kind === 'compress') {
+        setReplayLabel('', '后来');
+        treeReplayTimer = setTimeout(play, beat.hold);
+        return;
+      }
+      if (beat.kind === 'hold') {
+        treeReplayTimer = setTimeout(play, beat.hold);
+        return;
+      }
+      if (beat.kind === 'grow') {
+        const stageChange = (beat.morph || []).filter((m) => m.type === 'stage').pop();
+        const note = stageChange ? (STAGE_NOTE[stageChange.to] || '') : '';
+        setReplayLabel(replayDate(beat.until), note);
+        renderTree({ until: beat.until, replay: true, grow: true });
+        const dur = beat.stage === 'sprout' ? 2500 : 2100;
+        treeReplayTimer = setTimeout(play, dur);
+        return;
+      }
+      if (beat.kind === 'end') {
+        const label = $('treeReplayLabel');
+        label.hidden = true;
+        label.innerHTML = '';
+        $('view-tree').classList.remove('is-replaying');
+        treeReplaying = false;
         treeReplayTimer = null;
-        label.textContent = `${y}年12月`;
-        setTimeout(() => { label.hidden = true; lastTreeStage = ''; treeGrown = false; renderTree(); }, 900);
+        lastTreeStage = growthStage(list.length);
+        treeGrown = true;
+        renderTree({ skipGrow: true });
+        treeReplayTimer = setTimeout(() => {
+          if ($('view-tree').classList.contains('active')) openYearMe();
+        }, 600);
       }
     };
-    tick();
-    treeReplayTimer = setInterval(tick, 720);
+    play();
   }
 
   $('treeSvg').addEventListener('click', (e) => {
@@ -1571,6 +1712,7 @@
   $('treeYears').addEventListener('click', (e) => {
     const b = e.target.closest('[data-ty]');
     if (!b) return;
+    if (treeReplaying) stopReplay();
     const yy = +b.dataset.ty;
     if (yy > new Date().getFullYear()) { toast('这一年还没有开始。'); return; }
     treeYear = yy;
