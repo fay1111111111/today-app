@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#f6f1e7" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <title>今天</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="phone">
+    <!-- ============ 今天 ============ -->
+    <main id="view-today" class="view active">
+      <header class="today-head">
+        <div class="today-date" id="todayDate">2026年9月4日</div>
+        <div class="today-week" id="todayWeek">星期五</div>
+        <div class="today-term" id="todayTerm">白露 · 秋</div>
+        <div class="today-term-note" id="todayTermNote">草木渐收，天气转凉。</div>
+      </header>
+
+      <section class="ask">
+        <h1 class="ask-title">今天，想留下什么？</h1>
+
+        <button class="big-record" id="bigRecord" aria-label="记一下">
+          <span class="big-record-plus">＋</span>
+          <span class="big-record-text">记一下</span>
+          <span class="big-record-hint" id="bigRecordHint">长按说话 · 点击写下</span>
+        </button>
+
+        <div class="quick-grid">
+          <button class="quick" data-type="voice"><span>🎙</span>说一句</button>
+          <button class="quick" data-type="photo"><span>📷</span>拍一张</button>
+          <button class="quick" data-type="dream"><span>🌙</span>记个梦</button>
+          <button class="quick" data-type="text"><span>✍️</span>写一句</button>
+        </div>
+      </section>
+
+      <section class="timeline-sec">
+        <h2 class="sec-title" id="timelineTitle">今天已经留下</h2>
+        <div id="timeline" class="timeline"></div>
+      </section>
+
+      <section class="tree-teaser" id="treeTeaser">
+        <span class="tree-teaser-emoji" id="treeTeaserEmoji">🌱</span>
+        <span class="tree-teaser-text" id="treeTeaserText">你的树在等一片新叶</span>
+        <span class="tree-teaser-arrow">›</span>
+      </section>
+
+      <section class="question">
+        <div class="question-label">🌿 今日一问</div>
+        <p class="question-text" id="questionText">你现在正在经历人生的什么季节？</p>
+        <button class="question-answer" id="questionAnswer">顺手说一句 ›</button>
+      </section>
+
+      <div class="bottom-space"></div>
+    </main>
+
+    <!-- ============ 我的树 ============ -->
+    <main id="view-tree" class="view">
+      <header class="page-head">
+        <h1>我的树</h1>
+        <p id="treeSubtitle">每一次留下，都会长出一片叶子。</p>
+      </header>
+      <div class="tree-stage">
+        <svg id="treeSvg" viewBox="0 0 320 380" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+      <div class="tree-stats">
+        <div><b id="statDays">0</b><span>天有记录</span></div>
+        <div><b id="statLeaves">0</b><span>片叶子</span></div>
+        <div><b id="statBlossoms">0</b><span>朵花</span></div>
+        <div><b id="statFruits">0</b><span>颗果</span></div>
+      </div>
+      <p class="tree-legend">🍃 一次记录 = 一片叶子 · 🌸 一张照片 = 一朵花 · 🍎 一次心情 = 一颗果</p>
+      <div class="bottom-space"></div>
+    </main>
+
+    <!-- ============ 梦境 ============ -->
+    <main id="view-dream" class="view">
+      <header class="page-head">
+        <h1>梦境</h1>
+        <p>醒来之前，先把它留下来。</p>
+      </header>
+      <div id="dreamList" class="dream-list"></div>
+      <div class="bottom-space"></div>
+    </main>
+
+    <!-- ============ 我的一年 ============ -->
+    <main id="view-year" class="view">
+      <header class="page-head">
+        <h1 id="yearTitle">我的 2026</h1>
+        <p id="yearSubtitle">这一年，你已经留下了一些东西。</p>
+      </header>
+      <div class="year-stats">
+        <div><b id="yStatCount">0</b><span>条记录</span></div>
+        <div><b id="yStatDays">0</b><span>天</span></div>
+        <div><b id="yStatPhotos">0</b><span>张照片</span></div>
+        <div><b id="yStatDreams">0</b><span>个梦</span></div>
+      </div>
+      <h2 class="sec-title">十二个月</h2>
+      <div id="yearMonths" class="year-months"></div>
+      <h2 class="sec-title">四季</h2>
+      <div id="yearSeasons" class="year-seasons"></div>
+      <div class="year-book">
+        <div class="year-book-title">📖 《我的 2026》</div>
+        <p>到了年底，这一年留下的文字、照片和梦，会被整理成一本属于你的书。</p>
+        <p class="year-book-sub" id="yearBookSub">现在，先继续留下今天。</p>
+      </div>
+      <div class="bottom-space"></div>
+    </main>
+
+    <!-- ============ 底部导航 ============ -->
+    <nav class="tabbar">
+      <button class="tab active" data-view="today"><span>🏠</span>今天</button>
+      <button class="tab" data-view="tree"><span>🌳</span>我的树</button>
+      <button class="tab" data-view="dream"><span>🌙</span>梦境</button>
+      <button class="tab" data-view="year"><span>📖</span>我的一年</button>
+    </nav>
+
+    <!-- ============ 记一下：万能捕捉器（全屏） ============ -->
+    <section class="capture" id="capture">
+      <button class="capture-close" id="captureClose" aria-label="关闭">×</button>
+      <input type="file" id="photoInput" accept="image/*" capture="environment" hidden />
+
+      <!-- 状态 1：直接写 / 直接说 -->
+      <div class="cap-pane" data-pane="input">
+        <h1 class="cap-title">此刻，想留下什么？</h1>
+        <textarea id="capText" class="cap-text" placeholder="写下此刻……" rows="6"></textarea>
+        <button class="cap-voice" id="capVoice">
+          <span class="cap-voice-icon">🎙</span>
+          <span class="cap-voice-label" id="capVoiceLabel">按住说一说</span>
+        </button>
+        <div class="cap-live" id="capLive"></div>
+        <div class="cap-quick">
+          <button class="cap-quick-btn" data-mode="photo"><span>📷</span>照片</button>
+          <button class="cap-quick-btn" data-mode="dream"><span>🌙</span>梦境</button>
+          <button class="cap-quick-btn" data-mode="mood"><span>😊</span>心情</button>
+        </div>
+        <div class="cap-foot">
+          <button class="cap-primary" id="capDone">完成</button>
+        </div>
+      </div>
+
+      <!-- 状态 2：照片 -->
+      <div class="cap-pane" data-pane="photo">
+        <div class="cap-photo-wrap"><img id="capPhotoImg" alt="" /></div>
+        <p class="cap-sub">想给这张照片留句话吗？</p>
+        <textarea id="capPhotoText" class="cap-text cap-text-sm" placeholder="不写也可以" rows="2"></textarea>
+        <div class="cap-foot">
+          <button class="cap-link" id="capPhotoRetake">换一张</button>
+          <button class="cap-primary" id="capPhotoSave">留下</button>
+        </div>
+      </div>
+
+      <!-- 状态 3：梦境 -->
+      <div class="cap-pane" data-pane="dream">
+        <h1 class="cap-title">还记得刚才的梦吗？</h1>
+        <p class="cap-sub">不用想完整。<br/>想起什么，就说什么。</p>
+        <textarea id="capDreamText" class="cap-text" placeholder="梦见……" rows="5"></textarea>
+        <button class="cap-voice cap-voice-dream" id="capDreamVoice">
+          <span class="cap-voice-icon">🎙</span>
+          <span class="cap-voice-label" id="capDreamVoiceLabel">按住说一说</span>
+        </button>
+        <div class="cap-live" id="capDreamLive"></div>
+        <div class="cap-foot">
+          <button class="cap-primary" id="capDreamDone">完成</button>
+        </div>
+      </div>
+
+      <!-- 状态 4：心情 -->
+      <div class="cap-pane" data-pane="mood">
+        <h1 class="cap-title">😊 此刻是什么感觉？</h1>
+        <div class="cap-moods" id="capMoods"></div>
+        <textarea id="capMoodText" class="cap-text cap-text-sm" placeholder="想多说一句吗？不说也可以。" rows="2"></textarea>
+        <div class="cap-foot">
+          <button class="cap-primary" id="capMoodSave" disabled>留下</button>
+        </div>
+      </div>
+
+      <!-- 状态 5：记录完成卡（原始的我 + AI 轻轻整理后的我） -->
+      <div class="cap-pane" data-pane="card">
+        <div class="card" id="cardBox"></div>
+        <div class="review-chat" id="cardChat"></div>
+        <div class="card-status">
+          <div class="card-status-main">✓ 已经替你留下</div>
+          <div class="card-status-sub" id="cardFuture"></div>
+        </div>
+        <div class="card-tools">
+          <button class="cap-link" id="cardEdit">改一改</button>
+          <span class="dot">·</span>
+          <button class="cap-link" id="cardNoLink">不关联这条记录</button>
+          <span class="dot">·</span>
+          <button class="cap-link" id="cardMute">不希望 AI 分析这类内容</button>
+        </div>
+        <div class="cap-foot">
+          <button class="cap-primary" id="cardAgain">继续记一下</button>
+          <button class="cap-link" id="cardHome">回到今天</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 记录详情 ============ -->
+    <div class="sheet-mask" id="detailSheet">
+      <div class="sheet">
+        <div class="sheet-handle"></div>
+        <div class="card card-in-sheet" id="detailCard"></div>
+        <div class="detail-actions">
+          <button class="detail-delete" id="detailDelete">删掉这一条</button>
+          <button class="detail-close" id="detailClose">收起</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 长按录音浮层 ============ -->
+    <div class="voice-overlay" id="voiceOverlay">
+      <div class="voice-pulse"></div>
+      <div class="voice-hint" id="voiceHint">正在听……松开完成</div>
+      <div class="voice-live" id="voiceLive"></div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
