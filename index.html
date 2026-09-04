@@ -58,22 +58,29 @@
     </main>
 
     <!-- ============ 我的树 ============ -->
-    <main id="view-tree" class="view">
-      <header class="page-head">
-        <h1>我的树</h1>
-        <p id="treeSubtitle">每一次留下，都会长出一片叶子。</p>
+    <main id="view-tree" class="view view-tree">
+      <header class="tree-bar">
+        <button type="button" class="tree-bar-btn" id="treeBack" aria-label="返回">‹</button>
+        <div class="tree-bar-mid">
+          <h1>我的树</h1>
+          <p id="treeYearLabel">2026</p>
+        </div>
+        <button type="button" class="tree-bar-link" id="treeToYear">这一年</button>
       </header>
-      <div class="tree-stage">
-        <svg id="treeSvg" viewBox="0 0 320 380" xmlns="http://www.w3.org/2000/svg"></svg>
+      <p class="tree-lead" id="treeLead"></p>
+      <div class="tree-canvas">
+        <svg id="treeSvg" viewBox="0 0 360 540" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div class="tree-replay-label" id="treeReplayLabel" hidden></div>
       </div>
-      <div class="tree-stats">
-        <div><b id="statDays">0</b><span>天有记录</span></div>
-        <div><b id="statLeaves">0</b><span>片叶子</span></div>
-        <div><b id="statBlossoms">0</b><span>朵花</span></div>
-        <div><b id="statFruits">0</b><span>颗果</span></div>
-      </div>
-      <p class="tree-legend">🍃 一次记录 = 一片叶子 · 🌸 一张照片 = 一朵花 · 🍎 一次心情 = 一颗果</p>
-      <div class="bottom-space"></div>
+      <footer class="tree-foot">
+        <div class="tree-years" id="treeYears"></div>
+        <p class="tree-days" id="treeDays"></p>
+        <div class="tree-foot-actions">
+          <button type="button" class="tree-primary" id="treeCapture">记下今天</button>
+          <button type="button" class="tree-text-btn" id="treeReplay">看它怎么长出来</button>
+          <button type="button" class="tree-text-btn" id="treeRecords">查看这一年的记录</button>
+        </div>
+      </footer>
     </main>
 
     <!-- ============ 梦境 ============ -->
@@ -86,28 +93,19 @@
       <div class="bottom-space"></div>
     </main>
 
-    <!-- ============ 我的一年 ============ -->
-    <main id="view-year" class="view">
-      <header class="page-head">
-        <h1 id="yearTitle">我的 2026</h1>
-        <p id="yearSubtitle">这一年，你已经留下了一些东西。</p>
-      </header>
-      <div class="year-stats">
-        <div><b id="yStatCount">0</b><span>条记录</span></div>
-        <div><b id="yStatDays">0</b><span>天</span></div>
-        <div><b id="yStatPhotos">0</b><span>张照片</span></div>
-        <div><b id="yStatDreams">0</b><span>个梦</span></div>
+    <!-- ============ 我的一年 · 生命日历 ============ -->
+    <main id="view-year" class="view view-cal">
+      <div class="cal-stage" id="calStage">
+        <article class="cal-page" id="calPage"></article>
       </div>
-      <h2 class="sec-title">十二个月</h2>
-      <div id="yearMonths" class="year-months"></div>
-      <h2 class="sec-title">四季</h2>
-      <div id="yearSeasons" class="year-seasons"></div>
-      <div class="year-book">
-        <div class="year-book-title">📖 《我的 2026》</div>
-        <p>到了年底，这一年留下的文字、照片和梦，会被整理成一本属于你的书。</p>
-        <p class="year-book-sub" id="yearBookSub">现在，先继续留下今天。</p>
+      <div class="cal-flip">
+        <button class="cal-flip-btn" id="calPrev" aria-label="上一页">‹</button>
+        <div class="cal-flip-mid">
+          <div class="cal-dots" id="calDots"></div>
+          <div class="cal-flip-hint" id="calFlipHint">翻一页</div>
+        </div>
+        <button class="cal-flip-btn" id="calNext" aria-label="下一页">›</button>
       </div>
-      <div class="bottom-space"></div>
     </main>
 
     <!-- ============ 底部导航 ============ -->
@@ -115,7 +113,7 @@
       <button class="tab active" data-view="today"><span>🏠</span>今天</button>
       <button class="tab" data-view="tree"><span>🌳</span>我的树</button>
       <button class="tab" data-view="dream"><span>🌙</span>梦境</button>
-      <button class="tab" data-view="year"><span>📖</span>我的一年</button>
+      <button class="tab" data-view="year"><span>📅</span>我的一年</button>
     </nav>
 
     <!-- ============ 记一下：万能捕捉器（全屏） ============ -->
@@ -199,6 +197,28 @@
         </div>
       </div>
     </section>
+
+    <!-- ============ 树上的记忆卡片 ============ -->
+    <div class="sheet-mask" id="memSheet">
+      <div class="sheet mem-sheet">
+        <div class="sheet-handle"></div>
+        <div id="memBody"></div>
+        <button type="button" class="cap-link" id="memClose">收起</button>
+      </div>
+    </div>
+
+    <!-- ============ 某一天 ============ -->
+    <div class="sheet-mask" id="daySheet">
+      <div class="sheet">
+        <div class="sheet-handle"></div>
+        <h3 class="sheet-title" id="daySheetTitle">这一天</h3>
+        <p class="day-sheet-term" id="daySheetTerm"></p>
+        <div id="daySheetList" class="timeline"></div>
+        <div class="detail-actions">
+          <button class="detail-close" id="daySheetClose">收起</button>
+        </div>
+      </div>
+    </div>
 
     <!-- ============ 记录详情 ============ -->
     <div class="sheet-mask" id="detailSheet">
